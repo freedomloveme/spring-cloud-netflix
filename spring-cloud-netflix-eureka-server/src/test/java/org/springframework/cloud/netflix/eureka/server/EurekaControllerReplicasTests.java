@@ -1,5 +1,5 @@
 /*
- * Copyright 2016-2019 the original author or authors.
+ * Copyright 2016-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,15 +22,15 @@ import java.util.Map;
 import com.netflix.appinfo.ApplicationInfoManager;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.eureka.util.StatusInfo;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.springframework.cloud.netflix.eureka.server.EurekaControllerTests.setInstance;
 
-public class EurekaControllerReplicasTests {
+class EurekaControllerReplicasTests {
 
 	String noAuthList1 = "https://test1.com";
 
@@ -52,33 +52,35 @@ public class EurekaControllerReplicasTests {
 
 	String totalNoAutoList = combinationNoAuthList1 + "," + combinationNoAuthList2;
 
-	String empty = new String();
+	String empty = "";
 
 	private ApplicationInfoManager original;
 
 	private InstanceInfo instanceInfo;
 
-	@Before
-	public void setup() throws Exception {
+	@BeforeEach
+	void setup() throws Exception {
 		this.original = ApplicationInfoManager.getInstance();
 		setInstance(mock(ApplicationInfoManager.class));
 		instanceInfo = mock(InstanceInfo.class);
 	}
 
-	@After
-	public void teardown() throws Exception {
+	@AfterEach
+	void teardown() throws Exception {
 		setInstance(this.original);
 		instanceInfo = null;
 	}
 
 	@Test
-	public void testFilterReplicasNoAuth() throws Exception {
+	void testFilterReplicasNoAuth() {
 		Map<String, Object> model = new HashMap<>();
 		StatusInfo statusInfo = StatusInfo.Builder.newBuilder()
-				.add("registered-replicas", empty).add("available-replicas", noAuthList1)
-				.add("unavailable-replicas", noAuthList2)
-				.withInstanceInfo(this.instanceInfo).build();
-		EurekaController controller = new EurekaController(null);
+			.add("registered-replicas", empty)
+			.add("available-replicas", noAuthList1)
+			.add("unavailable-replicas", noAuthList2)
+			.withInstanceInfo(this.instanceInfo)
+			.build();
+		EurekaController controller = new EurekaController(null, new EurekaProperties());
 
 		controller.filterReplicas(model, statusInfo);
 
@@ -91,13 +93,15 @@ public class EurekaControllerReplicasTests {
 	}
 
 	@Test
-	public void testFilterReplicasAuth() throws Exception {
+	void testFilterReplicasAuth() {
 		Map<String, Object> model = new HashMap<>();
 		StatusInfo statusInfo = StatusInfo.Builder.newBuilder()
-				.add("registered-replicas", authList2)
-				.add("available-replicas", authList1).add("unavailable-replicas", empty)
-				.withInstanceInfo(instanceInfo).build();
-		EurekaController controller = new EurekaController(null);
+			.add("registered-replicas", authList2)
+			.add("available-replicas", authList1)
+			.add("unavailable-replicas", empty)
+			.withInstanceInfo(instanceInfo)
+			.build();
+		EurekaController controller = new EurekaController(null, new EurekaProperties());
 
 		controller.filterReplicas(model, statusInfo);
 
@@ -110,14 +114,15 @@ public class EurekaControllerReplicasTests {
 	}
 
 	@Test
-	public void testFilterReplicasAuthWithCombinationList() throws Exception {
+	void testFilterReplicasAuthWithCombinationList() {
 		Map<String, Object> model = new HashMap<>();
 		StatusInfo statusInfo = StatusInfo.Builder.newBuilder()
-				.add("registered-replicas", totalAutoList)
-				.add("available-replicas", combinationAuthList1)
-				.add("unavailable-replicas", combinationAuthList2)
-				.withInstanceInfo(instanceInfo).build();
-		EurekaController controller = new EurekaController(null);
+			.add("registered-replicas", totalAutoList)
+			.add("available-replicas", combinationAuthList1)
+			.add("unavailable-replicas", combinationAuthList2)
+			.withInstanceInfo(instanceInfo)
+			.build();
+		EurekaController controller = new EurekaController(null, new EurekaProperties());
 
 		controller.filterReplicas(model, statusInfo);
 

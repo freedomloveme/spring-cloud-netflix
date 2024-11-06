@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,6 +25,7 @@ import com.netflix.appinfo.HealthCheckHandler;
 import com.netflix.appinfo.InstanceInfo;
 import com.netflix.discovery.EurekaClient;
 import com.netflix.discovery.EurekaClientConfig;
+import com.netflix.discovery.shared.transport.jersey.TransportClientFactories;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -59,9 +60,8 @@ public class EurekaRegistration implements Registration {
 
 	private ObjectProvider<HealthCheckHandler> healthCheckHandler;
 
-	private EurekaRegistration(CloudEurekaInstanceConfig instanceConfig,
-			EurekaClient eurekaClient, ApplicationInfoManager applicationInfoManager,
-			ObjectProvider<HealthCheckHandler> healthCheckHandler) {
+	public EurekaRegistration(CloudEurekaInstanceConfig instanceConfig, EurekaClient eurekaClient,
+			ApplicationInfoManager applicationInfoManager, ObjectProvider<HealthCheckHandler> healthCheckHandler) {
 		this.eurekaClient = eurekaClient;
 		this.instanceConfig = instanceConfig;
 		this.applicationInfoManager = applicationInfoManager;
@@ -113,8 +113,7 @@ public class EurekaRegistration implements Registration {
 	public CloudEurekaClient getEurekaClient() {
 		if (this.cloudEurekaClient.get() == null) {
 			try {
-				this.cloudEurekaClient.compareAndSet(null,
-						getTargetObject(eurekaClient, CloudEurekaClient.class));
+				this.cloudEurekaClient.compareAndSet(null, getTargetObject(eurekaClient, CloudEurekaClient.class));
 			}
 			catch (Exception e) {
 				log.error("error getting CloudEurekaClient", e);
@@ -146,8 +145,7 @@ public class EurekaRegistration implements Registration {
 		return healthCheckHandler;
 	}
 
-	public void setHealthCheckHandler(
-			ObjectProvider<HealthCheckHandler> healthCheckHandler) {
+	public void setHealthCheckHandler(ObjectProvider<HealthCheckHandler> healthCheckHandler) {
 		this.healthCheckHandler = healthCheckHandler;
 	}
 
@@ -184,6 +182,8 @@ public class EurekaRegistration implements Registration {
 
 		private ApplicationEventPublisher publisher;
 
+		private TransportClientFactories<?> transportClientFactories;
+
 		Builder(CloudEurekaInstanceConfig instanceConfig) {
 			this.instanceConfig = instanceConfig;
 		}
@@ -203,8 +203,12 @@ public class EurekaRegistration implements Registration {
 			return this;
 		}
 
-		public Builder with(EurekaClientConfig clientConfig,
-				ApplicationEventPublisher publisher) {
+		public Builder with(TransportClientFactories<?> transportClientFactories) {
+			this.transportClientFactories = transportClientFactories;
+			return this;
+		}
+
+		public Builder with(EurekaClientConfig clientConfig, ApplicationEventPublisher publisher) {
 			this.clientConfig = clientConfig;
 			this.publisher = publisher;
 			return this;
@@ -214,22 +218,19 @@ public class EurekaRegistration implements Registration {
 			Assert.notNull(instanceConfig, "instanceConfig may not be null");
 
 			if (this.applicationInfoManager == null) {
-				InstanceInfo instanceInfo = new InstanceInfoFactory()
-						.create(this.instanceConfig);
-				this.applicationInfoManager = new ApplicationInfoManager(
-						this.instanceConfig, instanceInfo);
+				InstanceInfo instanceInfo = new InstanceInfoFactory().create(this.instanceConfig);
+				this.applicationInfoManager = new ApplicationInfoManager(this.instanceConfig, instanceInfo);
 			}
 			if (this.eurekaClient == null) {
-				Assert.notNull(this.clientConfig,
-						"if eurekaClient is null, EurekaClientConfig may not be null");
-				Assert.notNull(this.publisher,
-						"if eurekaClient is null, ApplicationEventPublisher may not be null");
+				Assert.notNull(this.clientConfig, "if eurekaClient is null, EurekaClientConfig may not be null");
+				Assert.notNull(this.publisher, "if eurekaClient is null, ApplicationEventPublisher may not be null");
+				Assert.notNull(this.transportClientFactories,
+						"if eurekaClient is null, TransportClientFactories may not be null");
 
-				this.eurekaClient = new CloudEurekaClient(this.applicationInfoManager,
-						this.clientConfig, this.publisher);
+				this.eurekaClient = new CloudEurekaClient(this.applicationInfoManager, this.clientConfig,
+						this.transportClientFactories, this.publisher);
 			}
-			return new EurekaRegistration(instanceConfig, eurekaClient,
-					applicationInfoManager, healthCheckHandler);
+			return new EurekaRegistration(instanceConfig, eurekaClient, applicationInfoManager, healthCheckHandler);
 		}
 
 	}

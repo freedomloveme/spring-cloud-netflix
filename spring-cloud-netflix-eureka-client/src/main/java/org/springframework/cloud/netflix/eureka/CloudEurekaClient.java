@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -28,6 +28,7 @@ import com.netflix.discovery.DiscoveryClient;
 import com.netflix.discovery.EurekaClientConfig;
 import com.netflix.discovery.shared.transport.EurekaHttpClient;
 import com.netflix.discovery.shared.transport.EurekaHttpResponse;
+import com.netflix.discovery.shared.transport.jersey.TransportClientFactories;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -48,27 +49,26 @@ public class CloudEurekaClient extends DiscoveryClient {
 
 	private final AtomicLong cacheRefreshedCount = new AtomicLong(0);
 
-	private ApplicationEventPublisher publisher;
+	private final ApplicationEventPublisher publisher;
 
-	private Field eurekaTransportField;
+	private final Field eurekaTransportField;
 
-	private ApplicationInfoManager applicationInfoManager;
+	private final ApplicationInfoManager applicationInfoManager;
 
-	private AtomicReference<EurekaHttpClient> eurekaHttpClient = new AtomicReference<>();
+	private final AtomicReference<EurekaHttpClient> eurekaHttpClient = new AtomicReference<>();
 
-	public CloudEurekaClient(ApplicationInfoManager applicationInfoManager,
-			EurekaClientConfig config, ApplicationEventPublisher publisher) {
-		this(applicationInfoManager, config, null, publisher);
+	public CloudEurekaClient(ApplicationInfoManager applicationInfoManager, EurekaClientConfig config,
+			TransportClientFactories transportClientFactories, ApplicationEventPublisher publisher) {
+		this(applicationInfoManager, config, transportClientFactories, null, publisher);
 	}
 
-	public CloudEurekaClient(ApplicationInfoManager applicationInfoManager,
-			EurekaClientConfig config, AbstractDiscoveryClientOptionalArgs<?> args,
+	public CloudEurekaClient(ApplicationInfoManager applicationInfoManager, EurekaClientConfig config,
+			TransportClientFactories transportClientFactories, AbstractDiscoveryClientOptionalArgs<?> args,
 			ApplicationEventPublisher publisher) {
-		super(applicationInfoManager, config, args);
+		super(applicationInfoManager, config, transportClientFactories, args);
 		this.applicationInfoManager = applicationInfoManager;
 		this.publisher = publisher;
-		this.eurekaTransportField = ReflectionUtils.findField(DiscoveryClient.class,
-				"eurekaTransport");
+		this.eurekaTransportField = ReflectionUtils.findField(DiscoveryClient.class, "eurekaTransport");
 		ReflectionUtils.makeAccessible(this.eurekaTransportField);
 	}
 
@@ -81,8 +81,7 @@ public class CloudEurekaClient extends DiscoveryClient {
 	}
 
 	public InstanceInfo getInstanceInfo(String appname, String instanceId) {
-		EurekaHttpResponse<InstanceInfo> response = getEurekaHttpClient()
-				.getInstance(appname, instanceId);
+		EurekaHttpResponse<InstanceInfo> response = getEurekaHttpClient().getInstance(appname, instanceId);
 		HttpStatus httpStatus = HttpStatus.valueOf(response.getStatusCode());
 		if (httpStatus.is2xxSuccessful() && response.getEntity() != null) {
 			return response.getEntity();
@@ -94,8 +93,8 @@ public class CloudEurekaClient extends DiscoveryClient {
 		if (this.eurekaHttpClient.get() == null) {
 			try {
 				Object eurekaTransport = this.eurekaTransportField.get(this);
-				Field registrationClientField = ReflectionUtils
-						.findField(eurekaTransport.getClass(), "registrationClient");
+				Field registrationClientField = ReflectionUtils.findField(eurekaTransport.getClass(),
+						"registrationClient");
 				ReflectionUtils.makeAccessible(registrationClientField);
 				this.eurekaHttpClient.compareAndSet(null,
 						(EurekaHttpClient) registrationClientField.get(eurekaTransport));
@@ -108,8 +107,7 @@ public class CloudEurekaClient extends DiscoveryClient {
 	}
 
 	public void setStatus(InstanceStatus newStatus, InstanceInfo info) {
-		getEurekaHttpClient().statusUpdate(info.getAppName(), info.getId(), newStatus,
-				info);
+		getEurekaHttpClient().statusUpdate(info.getAppName(), info.getId(), newStatus, info);
 	}
 
 	@Override

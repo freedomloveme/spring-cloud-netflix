@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 the original author or authors.
+ * Copyright 2017-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,33 +16,30 @@
 
 package org.springframework.cloud.netflix.eureka.http;
 
-import java.net.URI;
-import java.net.URISyntaxException;
+import java.util.Optional;
+import java.util.function.Supplier;
 
-import com.fasterxml.jackson.databind.BeanDescription;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonSerializer;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.PropertyNamingStrategy;
-import com.fasterxml.jackson.databind.SerializationConfig;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.module.SimpleModule;
-import com.fasterxml.jackson.databind.ser.BeanSerializerModifier;
-import com.fasterxml.jackson.databind.ser.std.BeanSerializerBase;
-import com.netflix.appinfo.InstanceInfo;
-import com.netflix.discovery.converters.jackson.mixin.ApplicationsJsonMixIn;
-import com.netflix.discovery.converters.jackson.mixin.InstanceInfoJsonMixIn;
-import com.netflix.discovery.converters.jackson.serializer.InstanceInfoJsonBeanSerializer;
-import com.netflix.discovery.shared.Applications;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+
 import com.netflix.discovery.shared.resolver.EurekaEndpoint;
 import com.netflix.discovery.shared.transport.EurekaHttpClient;
 import com.netflix.discovery.shared.transport.TransportClientFactory;
 
+import org.springframework.boot.web.client.RestTemplateBuilder;
+import org.springframework.cloud.configuration.SSLContextFactory;
+import org.springframework.cloud.configuration.TlsProperties;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.client.support.BasicAuthorizationInterceptor;
-import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.http.client.ClientHttpRequestFactory;
+import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.support.BasicAuthenticationInterceptor;
 import org.springframework.web.client.DefaultResponseErrorHandler;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+
+import static org.springframework.cloud.netflix.eureka.http.EurekaHttpClientUtils.extractUserInfo;
+import static org.springframework.cloud.netflix.eureka.http.EurekaHttpClientUtils.mappingJacksonHttpMessageConverter;
 
 /**
  * Provides the custom {@link RestTemplate} required by the
@@ -50,100 +47,109 @@ import org.springframework.web.client.RestTemplate;
  * deserialization.
  *
  * @author Daniel Lavoie
+ * @author Armin Krezovic
+ * @author Wonchul Heo
  */
 public class RestTemplateTransportClientFactory implements TransportClientFactory {
+
+	private final Optional<SSLContext> sslContext;
+
+	private final Optional<HostnameVerifier> hostnameVerifier;
+
+	private final EurekaClientHttpRequestFactorySupplier eurekaClientHttpRequestFactorySupplier;
+
+	private final Supplier<RestTemplateBuilder> restTemplateBuilderSupplier;
+
+	public RestTemplateTransportClientFactory(TlsProperties tlsProperties,
+			EurekaClientHttpRequestFactorySupplier eurekaClientHttpRequestFactorySupplier,
+			Supplier<RestTemplateBuilder> restTemplateBuilderSupplier) {
+		this.sslContext = context(tlsProperties);
+		this.hostnameVerifier = Optional.empty();
+		this.eurekaClientHttpRequestFactorySupplier = eurekaClientHttpRequestFactorySupplier;
+		this.restTemplateBuilderSupplier = restTemplateBuilderSupplier;
+	}
+
+	public RestTemplateTransportClientFactory(TlsProperties tlsProperties,
+			EurekaClientHttpRequestFactorySupplier eurekaClientHttpRequestFactorySupplier) {
+		this(tlsProperties, eurekaClientHttpRequestFactorySupplier, RestTemplateBuilder::new);
+	}
+
+	private Optional<SSLContext> context(TlsProperties properties) {
+		if (properties == null || !properties.isEnabled()) {
+			return Optional.empty();
+		}
+		try {
+			return Optional.of(new SSLContextFactory(properties).createSSLContext());
+		}
+		catch (Exception e) {
+			throw new IllegalStateException(e);
+		}
+	}
+
+	public RestTemplateTransportClientFactory(Optional<SSLContext> sslContext,
+			Optional<HostnameVerifier> hostnameVerifier,
+			EurekaClientHttpRequestFactorySupplier eurekaClientHttpRequestFactorySupplier,
+			Supplier<RestTemplateBuilder> restTemplateBuilderSupplier) {
+		this.sslContext = sslContext;
+		this.hostnameVerifier = hostnameVerifier;
+		this.eurekaClientHttpRequestFactorySupplier = eurekaClientHttpRequestFactorySupplier;
+		this.restTemplateBuilderSupplier = restTemplateBuilderSupplier;
+	}
+
+	public RestTemplateTransportClientFactory(Optional<SSLContext> sslContext,
+			Optional<HostnameVerifier> hostnameVerifier,
+			EurekaClientHttpRequestFactorySupplier eurekaClientHttpRequestFactorySupplier) {
+
+		this(sslContext, hostnameVerifier, eurekaClientHttpRequestFactorySupplier, RestTemplateBuilder::new);
+	}
+
+	public RestTemplateTransportClientFactory() {
+		this(Optional.empty(), Optional.empty(), new DefaultEurekaClientHttpRequestFactorySupplier());
+	}
 
 	@Override
 	public EurekaHttpClient newClient(EurekaEndpoint serviceUrl) {
 		return new RestTemplateEurekaHttpClient(restTemplate(serviceUrl.getServiceUrl()),
-				serviceUrl.getServiceUrl());
+				stripUserInfo(serviceUrl.getServiceUrl()));
+	}
+
+	// apache http client 5.2 fails with non-null userinfo
+	// basic auth added in restTemplate() below
+	private String stripUserInfo(String serviceUrl) {
+		return UriComponentsBuilder.fromUriString(serviceUrl).userInfo(null).toUriString();
 	}
 
 	private RestTemplate restTemplate(String serviceUrl) {
-		RestTemplate restTemplate = new RestTemplate();
-		try {
-			URI serviceURI = new URI(serviceUrl);
-			if (serviceURI.getUserInfo() != null) {
-				String[] credentials = serviceURI.getUserInfo().split(":");
-				if (credentials.length == 2) {
-					restTemplate.getInterceptors().add(new BasicAuthorizationInterceptor(
-							credentials[0], credentials[1]));
-				}
-			}
-		}
-		catch (URISyntaxException ignore) {
+		ClientHttpRequestFactory requestFactory = this.eurekaClientHttpRequestFactorySupplier
+			.get(this.sslContext.orElse(null), this.hostnameVerifier.orElse(null));
 
+		RestTemplate restTemplate;
+
+		if (restTemplateBuilderSupplier != null && restTemplateBuilderSupplier.get() != null) {
+			restTemplate = restTemplateBuilderSupplier.get().requestFactory(() -> requestFactory).build();
+		}
+		else {
+			restTemplate = new RestTemplate(requestFactory);
+		}
+
+		final EurekaHttpClientUtils.UserInfo userInfo = extractUserInfo(serviceUrl);
+		if (userInfo != null) {
+			restTemplate.getInterceptors()
+				.add(new BasicAuthenticationInterceptor(userInfo.username(), userInfo.password()));
 		}
 
 		restTemplate.getMessageConverters().add(0, mappingJacksonHttpMessageConverter());
 		restTemplate.setErrorHandler(new ErrorHandler());
 
-		return restTemplate;
-	}
-
-	/**
-	 * Provides the serialization configurations required by the Eureka Server. JSON
-	 * content exchanged with eureka requires a root node matching the entity being
-	 * serialized or deserialized. Achived with
-	 * {@link SerializationFeature#WRAP_ROOT_VALUE} and
-	 * {@link DeserializationFeature#UNWRAP_ROOT_VALUE}.
-	 * {@link PropertyNamingStrategy.SnakeCaseStrategy} is applied to the underlying
-	 * {@link ObjectMapper}.
-	 * @return a {@link MappingJackson2HttpMessageConverter} object
-	 */
-	public MappingJackson2HttpMessageConverter mappingJacksonHttpMessageConverter() {
-		MappingJackson2HttpMessageConverter converter = new MappingJackson2HttpMessageConverter();
-		converter.setObjectMapper(new ObjectMapper()
-				.setPropertyNamingStrategy(PropertyNamingStrategy.SNAKE_CASE));
-
-		SimpleModule jsonModule = new SimpleModule();
-		jsonModule.setSerializerModifier(createJsonSerializerModifier()); // keyFormatter,
-		// compact));
-		converter.getObjectMapper().registerModule(jsonModule);
-
-		converter.getObjectMapper().configure(SerializationFeature.WRAP_ROOT_VALUE, true);
-		converter.getObjectMapper().configure(DeserializationFeature.UNWRAP_ROOT_VALUE,
-				true);
-		converter.getObjectMapper().addMixIn(Applications.class,
-				ApplicationsJsonMixIn.class);
-		converter.getObjectMapper().addMixIn(InstanceInfo.class,
-				InstanceInfoJsonMixIn.class);
-
-		// converter.getObjectMapper().addMixIn(DataCenterInfo.class,
-		// DataCenterInfoXmlMixIn.class);
-		// converter.getObjectMapper().addMixIn(InstanceInfo.PortWrapper.class,
-		// PortWrapperXmlMixIn.class);
-		// converter.getObjectMapper().addMixIn(Application.class,
-		// ApplicationXmlMixIn.class);
-		// converter.getObjectMapper().addMixIn(Applications.class,
-		// ApplicationsXmlMixIn.class);
-
-		return converter;
-	}
-
-	public static BeanSerializerModifier createJsonSerializerModifier() { // final
-		// KeyFormatter
-		// keyFormatter,
-		// final
-		// boolean
-		// compactMode)
-		// {
-		return new BeanSerializerModifier() {
-			@Override
-			public JsonSerializer<?> modifySerializer(SerializationConfig config,
-					BeanDescription beanDesc, JsonSerializer<?> serializer) {
-				/*
-				 * if (beanDesc.getBeanClass().isAssignableFrom(Applications.class)) {
-				 * return new ApplicationsJsonBeanSerializer((BeanSerializerBase)
-				 * serializer, keyFormatter); }
-				 */
-				if (beanDesc.getBeanClass().isAssignableFrom(InstanceInfo.class)) {
-					return new InstanceInfoJsonBeanSerializer(
-							(BeanSerializerBase) serializer, false);
-				}
-				return serializer;
+		restTemplate.getInterceptors().add((request, body, execution) -> {
+			ClientHttpResponse response = execution.execute(request, body);
+			if (!response.getStatusCode().equals(HttpStatus.NOT_FOUND)) {
+				return response;
 			}
-		};
+			return new NotFoundHttpResponse(response);
+		});
+
+		return restTemplate;
 	}
 
 	@Override
@@ -153,12 +159,12 @@ public class RestTemplateTransportClientFactory implements TransportClientFactor
 	class ErrorHandler extends DefaultResponseErrorHandler {
 
 		@Override
-		protected boolean hasError(HttpStatus statusCode) {
+		protected boolean hasError(HttpStatusCode statusCode) {
 			/**
-			 * When the Eureka server restarts and a client tries to sent a heartbeat the
-			 * server will respond with a 404. By default RestTemplate will throw an
+			 * When the Eureka server restarts and a client tries to send a heartbeat the
+			 * server will respond with a 404. By default, RestTemplate will throw an
 			 * exception in this case. What we want is to return the 404 to the upstream
-			 * code so it will send another registration request to the server.
+			 * code, so it will send another registration request to the server.
 			 */
 			if (statusCode.is4xxClientError()) {
 				return false;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,61 +19,62 @@ package org.springframework.cloud.netflix.eureka.server;
 import com.netflix.appinfo.ApplicationInfoManager;
 import com.netflix.discovery.EurekaClientConfig;
 import com.netflix.eureka.EurekaServerConfig;
+import com.netflix.eureka.cluster.PeerEurekaNode;
 import com.netflix.eureka.cluster.PeerEurekaNodes;
 import com.netflix.eureka.registry.PeerAwareInstanceRegistry;
 import com.netflix.eureka.resources.ServerCodecs;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.mockito.Mockito;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.test.context.junit4.SpringRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@RunWith(SpringRunner.class)
 @SpringBootTest(classes = EurekaCustomPeerNodesTests.Application.class,
-		webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-		value = { "spring.application.name=eureka", "server.contextPath=/context",
-				"management.security.enabled=false" })
-public class EurekaCustomPeerNodesTests {
+		webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, value = { "spring.application.name=eureka",
+				"server.contextPath=/context", "management.security.enabled=false" })
+class EurekaCustomPeerNodesTests {
 
 	@Autowired
 	private PeerEurekaNodes peerEurekaNodes;
 
 	@Test
-	public void testCustomPeerNodesShouldTakePrecedenceOverDefault() {
+	void testCustomPeerNodesShouldTakePrecedenceOverDefault() {
 		assertThat(peerEurekaNodes instanceof CustomEurekaPeerNodes)
-				.as("PeerEurekaNodes should be the user created one").isTrue();
+			.as("PeerEurekaNodes should be the user created one")
+			.isTrue();
 	}
 
-	@Configuration
+	@Configuration(proxyBeanMethods = false)
 	@EnableAutoConfiguration
 	@EnableEurekaServer
 	protected static class Application {
 
 		@Bean
 		public PeerEurekaNodes myPeerEurekaNodes(PeerAwareInstanceRegistry registry,
-				EurekaServerConfig eurekaServerConfig,
-				EurekaClientConfig eurekaClientConfig, ServerCodecs serverCodecs,
+				EurekaServerConfig eurekaServerConfig, EurekaClientConfig eurekaClientConfig, ServerCodecs serverCodecs,
 				ApplicationInfoManager applicationInfoManager) {
-			return new CustomEurekaPeerNodes(registry, eurekaServerConfig,
-					eurekaClientConfig, serverCodecs, applicationInfoManager);
+			return new CustomEurekaPeerNodes(registry, eurekaServerConfig, eurekaClientConfig, serverCodecs,
+					applicationInfoManager);
 		}
 
 	}
 
 	private static class CustomEurekaPeerNodes extends PeerEurekaNodes {
 
-		CustomEurekaPeerNodes(PeerAwareInstanceRegistry registry,
-				EurekaServerConfig serverConfig, EurekaClientConfig clientConfig,
-				ServerCodecs serverCodecs,
+		CustomEurekaPeerNodes(PeerAwareInstanceRegistry registry, EurekaServerConfig serverConfig,
+				EurekaClientConfig clientConfig, ServerCodecs serverCodecs,
 				ApplicationInfoManager applicationInfoManager) {
-			super(registry, serverConfig, clientConfig, serverCodecs,
-					applicationInfoManager);
+			super(registry, serverConfig, clientConfig, serverCodecs, applicationInfoManager);
+		}
+
+		@Override
+		protected PeerEurekaNode createPeerEurekaNode(String peerEurekaNodeUrl) {
+			return Mockito.mock(PeerEurekaNode.class);
 		}
 
 	}

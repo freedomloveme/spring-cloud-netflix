@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,10 +16,8 @@
 
 package org.springframework.cloud.netflix.eureka;
 
-import java.io.IOException;
-
 import com.netflix.appinfo.InstanceInfo;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.boot.autoconfigure.context.PropertyPlaceholderAutoConfiguration;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -32,27 +30,26 @@ import org.springframework.context.annotation.Configuration;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-public class InstanceInfoFactoryTests {
+class InstanceInfoFactoryTests {
 
-	private AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
+	private final AnnotationConfigApplicationContext context = new AnnotationConfigApplicationContext();
 
 	@Test
-	public void instanceIdIsHostNameByDefault() throws IOException {
+	void instanceIdIsHostNameByDefault() {
 		InstanceInfo instanceInfo = setupInstance();
 		try (InetUtils utils = new InetUtils(new InetUtilsProperties())) {
-			assertThat(instanceInfo.getId())
-					.isEqualTo(utils.findFirstNonLoopbackHostInfo().getHostname());
+			assertThat(instanceInfo.getId()).isEqualTo(utils.findFirstNonLoopbackHostInfo().getHostname());
 		}
 	}
 
 	@Test
-	public void instanceIdIsIpWhenIpPreferred() throws Exception {
+	void instanceIdIsIpWhenIpPreferred() {
 		InstanceInfo instanceInfo = setupInstance("eureka.instance.preferIpAddress:true");
 		assertThat(instanceInfo.getId().matches("(\\d+\\.){3}\\d+")).isTrue();
 	}
 
 	@Test
-	public void instanceInfoIdIsInstanceIdWhenSet() {
+	void instanceInfoIdIsInstanceIdWhenSet() {
 		InstanceInfo instanceInfo = setupInstance("eureka.instance.instanceId:special");
 		assertThat(instanceInfo.getId()).isEqualTo("special");
 	}
@@ -60,8 +57,7 @@ public class InstanceInfoFactoryTests {
 	private InstanceInfo setupInstance(String... pairs) {
 		TestPropertyValues.of(pairs).applyTo(this.context);
 
-		this.context.register(PropertyPlaceholderAutoConfiguration.class,
-				TestConfiguration.class);
+		this.context.register(PropertyPlaceholderAutoConfiguration.class, TestConfiguration.class);
 		this.context.refresh();
 
 		EurekaInstanceConfigBean instanceConfig = getInstanceConfig();
@@ -72,7 +68,7 @@ public class InstanceInfoFactoryTests {
 		return this.context.getBean(EurekaInstanceConfigBean.class);
 	}
 
-	@Configuration
+	@Configuration(proxyBeanMethods = false)
 	@EnableConfigurationProperties
 	protected static class TestConfiguration {
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -33,9 +33,9 @@ import com.netflix.eureka.EurekaServerContextHolder;
 import com.netflix.eureka.cluster.PeerEurekaNode;
 import com.netflix.eureka.cluster.PeerEurekaNodes;
 import com.netflix.eureka.registry.PeerAwareInstanceRegistry;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.util.ReflectionUtils;
@@ -44,21 +44,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-public class EurekaControllerTests {
+class EurekaControllerTests {
 
 	private ApplicationInfoManager infoManager;
 
 	private ApplicationInfoManager original;
 
-	@Before
-	public void setup() throws Exception {
+	@BeforeEach
+	void setup() throws Exception {
 		PeerEurekaNodes peerEurekaNodes = mock(PeerEurekaNodes.class);
-		when(peerEurekaNodes.getPeerNodesView())
-				.thenReturn(Collections.<PeerEurekaNode>emptyList());
+		when(peerEurekaNodes.getPeerNodesView()).thenReturn(Collections.<PeerEurekaNode>emptyList());
 
-		InstanceInfo instanceInfo = InstanceInfo.Builder.newBuilder().setAppName("test")
-				.setDataCenterInfo(new MyDataCenterInfo(DataCenterInfo.Name.MyOwn))
-				.build();
+		InstanceInfo instanceInfo = InstanceInfo.Builder.newBuilder()
+			.setAppName("test")
+			.setDataCenterInfo(new MyDataCenterInfo(DataCenterInfo.Name.MyOwn))
+			.build();
 
 		this.infoManager = mock(ApplicationInfoManager.class);
 		this.original = ApplicationInfoManager.getInstance();
@@ -66,9 +66,11 @@ public class EurekaControllerTests {
 		when(this.infoManager.getInfo()).thenReturn(instanceInfo);
 
 		Application myapp = new Application("myapp");
-		myapp.addInstance(InstanceInfo.Builder.newBuilder().setAppName("myapp")
-				.setDataCenterInfo(new MyDataCenterInfo(DataCenterInfo.Name.MyOwn))
-				.setInstanceId("myapp:1").build());
+		myapp.addInstance(InstanceInfo.Builder.newBuilder()
+			.setAppName("myapp")
+			.setDataCenterInfo(new MyDataCenterInfo(DataCenterInfo.Name.MyOwn))
+			.setInstanceId("myapp:1")
+			.build());
 
 		ArrayList<Application> applications = new ArrayList<>();
 		applications.add(myapp);
@@ -84,26 +86,27 @@ public class EurekaControllerTests {
 
 	}
 
-	@After
-	public void teardown() throws Exception {
+	@AfterEach
+	void teardown() throws Exception {
 		setInstance(this.original);
 	}
 
-	static void setInstance(ApplicationInfoManager infoManager)
-			throws IllegalAccessException {
-		Field instance = ReflectionUtils.findField(ApplicationInfoManager.class,
-				"instance");
+	static void setInstance(ApplicationInfoManager infoManager) throws IllegalAccessException {
+		Field instance = ReflectionUtils.findField(ApplicationInfoManager.class, "instance");
 		ReflectionUtils.makeAccessible(instance);
 		instance.set(null, infoManager);
 	}
 
 	@Test
-	public void testStatus() throws Exception {
+	void testStatus() {
 		Map<String, Object> model = new HashMap<>();
 
-		EurekaController controller = new EurekaController(infoManager);
+		EurekaController controller = new EurekaController(infoManager, new EurekaProperties());
 
 		controller.status(new MockHttpServletRequest("GET", "/"), model);
+
+		assertThat((String) model.get("environment")).isEqualTo("test");
+		assertThat((String) model.get("datacenter")).isEqualTo("default");
 
 		Map<String, Object> app = getFirst(model, "apps");
 		Map<String, Object> instanceInfo = getFirst(app, "instanceInfos");

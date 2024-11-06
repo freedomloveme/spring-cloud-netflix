@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,18 +20,14 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import javax.servlet.http.HttpServletRequest;
 
 import com.netflix.appinfo.AmazonInfo;
 import com.netflix.appinfo.ApplicationInfoManager;
 import com.netflix.appinfo.DataCenterInfo;
 import com.netflix.appinfo.InstanceInfo;
-import com.netflix.config.ConfigurationManager;
 import com.netflix.discovery.shared.Application;
 import com.netflix.discovery.shared.Pair;
 import com.netflix.eureka.EurekaServerContext;
@@ -41,6 +37,7 @@ import com.netflix.eureka.registry.PeerAwareInstanceRegistry;
 import com.netflix.eureka.registry.PeerAwareInstanceRegistryImpl;
 import com.netflix.eureka.resources.StatusResource;
 import com.netflix.eureka.util.StatusInfo;
+import jakarta.servlet.http.HttpServletRequest;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Controller;
@@ -50,6 +47,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
 /**
  * @author Spencer Gibb
  * @author Gang Li
+ * @author Weix Sun
  */
 @Controller
 @RequestMapping("${eureka.dashboard.path:/}")
@@ -58,10 +56,13 @@ public class EurekaController {
 	@Value("${eureka.dashboard.path:/}")
 	private String dashboardPath = "";
 
-	private ApplicationInfoManager applicationInfoManager;
+	private final ApplicationInfoManager applicationInfoManager;
 
-	public EurekaController(ApplicationInfoManager applicationInfoManager) {
+	private final EurekaProperties eurekaProperties;
+
+	public EurekaController(ApplicationInfoManager applicationInfoManager, EurekaProperties eurekaProperties) {
 		this.applicationInfoManager = applicationInfoManager;
+		this.eurekaProperties = eurekaProperties;
 	}
 
 	@RequestMapping(method = RequestMethod.GET)
@@ -110,8 +111,7 @@ public class EurekaController {
 	protected void populateBase(HttpServletRequest request, Map<String, Object> model) {
 		model.put("time", new Date());
 		model.put("basePath", "/");
-		model.put("dashboardPath",
-				this.dashboardPath.equals("/") ? "" : this.dashboardPath);
+		model.put("dashboardPath", this.dashboardPath.equals("/") ? "" : this.dashboardPath);
 		populateHeader(model);
 		populateNavbar(request, model);
 	}
@@ -119,20 +119,17 @@ public class EurekaController {
 	private void populateHeader(Map<String, Object> model) {
 		model.put("currentTime", StatusResource.getCurrentTimeAsString());
 		model.put("upTime", StatusInfo.getUpTime());
-		model.put("environment",
-				ConfigurationManager.getDeploymentContext().getDeploymentEnvironment());
-		model.put("datacenter",
-				ConfigurationManager.getDeploymentContext().getDeploymentDatacenter());
+		model.put("environment", eurekaProperties.getEnvironment());
+		model.put("datacenter", eurekaProperties.getDatacenter());
 		PeerAwareInstanceRegistry registry = getRegistry();
 		model.put("registry", registry);
-		model.put("isBelowRenewThresold", registry.isBelowRenewThresold() == 1);
+		model.put("isBelowRenewThreshold", registry.isBelowRenewThresold() == 1);
 		DataCenterInfo info = applicationInfoManager.getInfo().getDataCenterInfo();
 		if (info.getName() == DataCenterInfo.Name.Amazon) {
 			AmazonInfo amazonInfo = (AmazonInfo) info;
 			model.put("amazonInfo", amazonInfo);
 			model.put("amiId", amazonInfo.get(AmazonInfo.MetaDataKey.amiId));
-			model.put("availabilityZone",
-					amazonInfo.get(AmazonInfo.MetaDataKey.availabilityZone));
+			model.put("availabilityZone", amazonInfo.get(AmazonInfo.MetaDataKey.availabilityZone));
 			model.put("instanceId", amazonInfo.get(AmazonInfo.MetaDataKey.instanceId));
 		}
 	}
@@ -147,8 +144,7 @@ public class EurekaController {
 
 	private void populateNavbar(HttpServletRequest request, Map<String, Object> model) {
 		Map<String, String> replicas = new LinkedHashMap<>();
-		List<PeerEurekaNode> list = getServerContext().getPeerEurekaNodes()
-				.getPeerNodesView();
+		List<PeerEurekaNode> list = getServerContext().getPeerEurekaNodes().getPeerNodesView();
 		for (PeerEurekaNode node : list) {
 			try {
 				URI uri = new URI(node.getServiceUrl());
@@ -197,21 +193,15 @@ public class EurekaController {
 				else {
 					zoneCounts.put(zone, 1);
 				}
-				List<Pair<String, String>> list = instancesByStatus.get(status);
-				if (list == null) {
-					list = new ArrayList<>();
-					instancesByStatus.put(status, list);
-				}
+				List<Pair<String, String>> list = instancesByStatus.computeIfAbsent(status, k -> new ArrayList<>());
 				list.add(new Pair<>(id, url));
 			}
 			appData.put("amiCounts", amiCounts.entrySet());
 			appData.put("zoneCounts", zoneCounts.entrySet());
 			ArrayList<Map<String, Object>> instanceInfos = new ArrayList<>();
 			appData.put("instanceInfos", instanceInfos);
-			for (Iterator<Map.Entry<InstanceInfo.InstanceStatus, List<Pair<String, String>>>> iter = instancesByStatus
-					.entrySet().iterator(); iter.hasNext();) {
-				Map.Entry<InstanceInfo.InstanceStatus, List<Pair<String, String>>> entry = iter
-						.next();
+			for (Map.Entry<InstanceInfo.InstanceStatus, List<Pair<String, String>>> entry : instancesByStatus
+				.entrySet()) {
 				List<Pair<String, String>> value = entry.getValue();
 				InstanceInfo.InstanceStatus status = entry.getKey();
 				LinkedHashMap<String, Object> instanceData = new LinkedHashMap<>();
@@ -261,15 +251,12 @@ public class EurekaController {
 		instanceMap.put("status", instanceInfo.getStatus().toString());
 		if (instanceInfo.getDataCenterInfo().getName() == DataCenterInfo.Name.Amazon) {
 			AmazonInfo info = (AmazonInfo) instanceInfo.getDataCenterInfo();
-			instanceMap.put("availability-zone",
-					info.get(AmazonInfo.MetaDataKey.availabilityZone));
+			instanceMap.put("availability-zone", info.get(AmazonInfo.MetaDataKey.availabilityZone));
 			instanceMap.put("public-ipv4", info.get(AmazonInfo.MetaDataKey.publicIpv4));
 			instanceMap.put("instance-id", info.get(AmazonInfo.MetaDataKey.instanceId));
-			instanceMap.put("public-hostname",
-					info.get(AmazonInfo.MetaDataKey.publicHostname));
+			instanceMap.put("public-hostname", info.get(AmazonInfo.MetaDataKey.publicHostname));
 			instanceMap.put("ami-id", info.get(AmazonInfo.MetaDataKey.amiId));
-			instanceMap.put("instance-type",
-					info.get(AmazonInfo.MetaDataKey.instanceType));
+			instanceMap.put("instance-type", info.get(AmazonInfo.MetaDataKey.instanceType));
 		}
 		model.put("instanceInfo", instanceMap);
 	}
@@ -277,16 +264,13 @@ public class EurekaController {
 	protected void filterReplicas(Map<String, Object> model, StatusInfo statusInfo) {
 		Map<String, String> applicationStats = statusInfo.getApplicationStats();
 		if (applicationStats.get("registered-replicas").contains("@")) {
-			applicationStats.put("registered-replicas",
-					scrubBasicAuth(applicationStats.get("registered-replicas")));
+			applicationStats.put("registered-replicas", scrubBasicAuth(applicationStats.get("registered-replicas")));
 		}
 		if (applicationStats.get("unavailable-replicas").contains("@")) {
-			applicationStats.put("unavailable-replicas",
-					scrubBasicAuth(applicationStats.get("unavailable-replicas")));
+			applicationStats.put("unavailable-replicas", scrubBasicAuth(applicationStats.get("unavailable-replicas")));
 		}
 		if (applicationStats.get("available-replicas").contains("@")) {
-			applicationStats.put("available-replicas",
-					scrubBasicAuth(applicationStats.get("available-replicas")));
+			applicationStats.put("available-replicas", scrubBasicAuth(applicationStats.get("available-replicas")));
 		}
 		model.put("applicationStats", applicationStats);
 	}
@@ -296,8 +280,7 @@ public class EurekaController {
 		StringBuilder filteredUrls = new StringBuilder();
 		for (String u : urls) {
 			if (u.contains("@")) {
-				filteredUrls.append(u.substring(0, u.indexOf("//") + 2))
-						.append(u.substring(u.indexOf("@") + 1, u.length())).append(",");
+				filteredUrls.append(u, 0, u.indexOf("//") + 2).append(u.substring(u.indexOf("@") + 1)).append(",");
 			}
 			else {
 				filteredUrls.append(u).append(",");

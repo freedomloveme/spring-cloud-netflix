@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,8 +18,7 @@ package org.springframework.cloud.netflix.eureka.server;
 
 import java.util.Map;
 
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -28,30 +27,28 @@ import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.cloud.netflix.eureka.server.ApplicationContextTests.Application;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.test.context.junit4.SpringJUnit4ClassRunner;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@RunWith(SpringJUnit4ClassRunner.class)
 @SpringBootTest(classes = Application.class, webEnvironment = WebEnvironment.RANDOM_PORT,
 		value = { "spring.application.name=eureka", "eureka.dashboard.enabled=false" })
-public class ApplicationDashboardDisabledTests {
+class ApplicationDashboardDisabledTests {
 
 	@Value("${local.server.port}")
 	private int port = 0;
 
 	@Test
-	public void catalogLoads() {
+	void catalogLoads() {
 		@SuppressWarnings("rawtypes")
-		ResponseEntity<Map> entity = new TestRestTemplate().getForEntity(
-				"http://localhost:" + this.port + "/eureka/apps", Map.class);
+		ResponseEntity<Map> entity = new TestRestTemplate()
+			.getForEntity("http://localhost:" + this.port + "/eureka/apps", Map.class);
 		assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.OK);
 	}
 
 	@Test
-	public void dashboardLoads() {
-		ResponseEntity<String> entity = new TestRestTemplate()
-				.getForEntity("http://localhost:" + this.port + "/", String.class);
+	void dashboardLoads() {
+		ResponseEntity<String> entity = new TestRestTemplate().getForEntity("http://localhost:" + this.port + "/",
+				String.class);
 		assertThat(entity.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
 	}
 

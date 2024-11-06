@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2019 the original author or authors.
+ * Copyright 2015-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@
 
 package org.springframework.cloud.netflix.eureka;
 
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -32,47 +32,46 @@ import static org.assertj.core.api.Assertions.assertThat;
  * @author Dave Syer
  * @author Biju Kunjummen
  */
-public class ConditionalOnRefreshScopeTests {
+class ConditionalOnRefreshScopeTests {
 
 	@Test
-	public void refreshScopeIncluded() {
-		new ApplicationContextRunner()
-				.withConfiguration(AutoConfigurations.of(RefreshAutoConfiguration.class))
-				.withUserConfiguration(Beans.class).run(c -> {
-					assertThat(c).hasSingleBean(
-							org.springframework.cloud.context.scope.refresh.RefreshScope.class);
-					assertThat(c.getBean("foo")).isEqualTo("foo");
-				});
+	void refreshScopeIncluded() {
+		new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(RefreshAutoConfiguration.class))
+			.withUserConfiguration(Beans.class)
+			.run(c -> {
+				assertThat(c).hasSingleBean(org.springframework.cloud.context.scope.refresh.RefreshScope.class);
+				assertThat(c.getBean("foo")).isEqualTo("foo");
+			});
 	}
 
 	@Test
-	public void refreshScopeIncludedAndPropertyDisabled() {
-		new ApplicationContextRunner()
-				.withConfiguration(AutoConfigurations.of(RefreshAutoConfiguration.class))
-				.withPropertyValues("eureka.client.refresh.enable=false")
-				.withUserConfiguration(Beans.class).run(c -> {
-					assertThat(c).hasSingleBean(
-							org.springframework.cloud.context.scope.refresh.RefreshScope.class);
-					assertThat(c).doesNotHaveBean("foo");
-					assertThat(c.getBean("bar")).isEqualTo("bar");
-				});
+	void refreshScopeIncludedAndPropertyDisabled() {
+		new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(RefreshAutoConfiguration.class))
+			.withPropertyValues("eureka.client.refresh.enable=false")
+			.withUserConfiguration(Beans.class)
+			.run(c -> {
+				assertThat(c).hasSingleBean(org.springframework.cloud.context.scope.refresh.RefreshScope.class);
+				assertThat(c).doesNotHaveBean("foo");
+				assertThat(c.getBean("bar")).isEqualTo("bar");
+			});
 	}
 
 	@Test
-	public void refreshScopeNotIncluded() {
+	void refreshScopeNotIncluded() {
 		new ApplicationContextRunner().withUserConfiguration(Beans.class).run(c -> {
 			assertThat(c).doesNotHaveBean("foo");
 			assertThat(c.getBean("bar")).isEqualTo("bar");
 		});
 
 		new ApplicationContextRunner().withUserConfiguration(Beans.class)
-				.withPropertyValues("eureka.client.refresh.enable=false").run(c -> {
-					assertThat(c).doesNotHaveBean("foo");
-					assertThat(c.getBean("bar")).isEqualTo("bar");
-				});
+			.withPropertyValues("eureka.client.refresh.enable=false")
+			.run(c -> {
+				assertThat(c).doesNotHaveBean("foo");
+				assertThat(c.getBean("bar")).isEqualTo("bar");
+			});
 	}
 
-	@Configuration
+	@Configuration(proxyBeanMethods = false)
 	protected static class Beans {
 
 		@Bean

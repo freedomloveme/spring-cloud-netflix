@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2024 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,38 +17,64 @@
 package org.springframework.cloud.netflix.eureka.serviceregistry;
 
 import java.util.HashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.netflix.appinfo.InstanceInfo;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
 import org.springframework.cloud.client.serviceregistry.ServiceRegistry;
+import org.springframework.cloud.netflix.eureka.EurekaInstanceConfigBean;
 
 import static com.netflix.appinfo.InstanceInfo.InstanceStatus.UNKNOWN;
 
 /**
  * @author Spencer Gibb
+ * @author Robert Bleyl
  */
 public class EurekaServiceRegistry implements ServiceRegistry<EurekaRegistration> {
 
 	private static final Log log = LogFactory.getLog(EurekaServiceRegistry.class);
 
+	private EurekaInstanceConfigBean eurekaInstanceConfigBean;
+
+	public EurekaServiceRegistry() {
+
+	}
+
+	public EurekaServiceRegistry(EurekaInstanceConfigBean eurekaInstanceConfigBean) {
+		this.eurekaInstanceConfigBean = eurekaInstanceConfigBean;
+	}
+
 	@Override
 	public void register(EurekaRegistration reg) {
-		maybeInitializeClient(reg);
+		if (eurekaInstanceConfigBean != null && eurekaInstanceConfigBean.isAsyncClientInitialization()) {
+			if (log.isDebugEnabled()) {
+				log.debug("Initializing client asynchronously...");
+			}
 
-		if (log.isInfoEnabled()) {
-			log.info("Registering application "
-					+ reg.getApplicationInfoManager().getInfo().getAppName()
-					+ " with eureka with status "
-					+ reg.getInstanceConfig().getInitialStatus());
+			ExecutorService executorService = Executors.newSingleThreadExecutor();
+			executorService.submit(() -> {
+				maybeInitializeClient(reg);
+				if (log.isDebugEnabled()) {
+					log.debug("Asynchronous client initialization done.");
+				}
+			});
+		}
+		else {
+			maybeInitializeClient(reg);
 		}
 
-		reg.getApplicationInfoManager()
-				.setInstanceStatus(reg.getInstanceConfig().getInitialStatus());
+		if (log.isInfoEnabled()) {
+			log.info("Registering application " + reg.getApplicationInfoManager().getInfo().getAppName()
+					+ " with eureka with status " + reg.getInstanceConfig().getInitialStatus());
+		}
 
-		reg.getHealthCheckHandler().ifAvailable(healthCheckHandler -> reg
-				.getEurekaClient().registerHealthCheck(healthCheckHandler));
+		reg.getApplicationInfoManager().setInstanceStatus(reg.getInstanceConfig().getInitialStatus());
+
+		reg.getHealthCheckHandler()
+			.ifAvailable(healthCheckHandler -> reg.getEurekaClient().registerHealthCheck(healthCheckHandler));
 	}
 
 	private void maybeInitializeClient(EurekaRegistration reg) {
@@ -62,13 +88,11 @@ public class EurekaServiceRegistry implements ServiceRegistry<EurekaRegistration
 		if (reg.getApplicationInfoManager().getInfo() != null) {
 
 			if (log.isInfoEnabled()) {
-				log.info("Unregistering application "
-						+ reg.getApplicationInfoManager().getInfo().getAppName()
+				log.info("Unregistering application " + reg.getApplicationInfoManager().getInfo().getAppName()
 						+ " with eureka with status DOWN");
 			}
 
-			reg.getApplicationInfoManager()
-					.setInstanceStatus(InstanceInfo.InstanceStatus.DOWN);
+			reg.getApplicationInfoManager().setInstanceStatus(InstanceInfo.InstanceStatus.DOWN);
 
 			// shutdown of eureka client should happen with EurekaRegistration.close()
 			// auto registration will create a bean which will be properly disposed
@@ -87,17 +111,16 @@ public class EurekaServiceRegistry implements ServiceRegistry<EurekaRegistration
 		}
 
 		// TODO: howto deal with status types across discovery systems?
-		InstanceInfo.InstanceStatus newStatus = InstanceInfo.InstanceStatus
-				.toEnum(status);
+		InstanceInfo.InstanceStatus newStatus = InstanceInfo.InstanceStatus.toEnum(status);
 		registration.getEurekaClient().setStatus(newStatus, info);
 	}
 
+	@SuppressWarnings("unchecked")
 	@Override
 	public Object getStatus(EurekaRegistration registration) {
 		String appname = registration.getApplicationInfoManager().getInfo().getAppName();
 		String instanceId = registration.getApplicationInfoManager().getInfo().getId();
-		InstanceInfo info = registration.getEurekaClient().getInstanceInfo(appname,
-				instanceId);
+		InstanceInfo info = registration.getEurekaClient().getInstanceInfo(appname, instanceId);
 
 		HashMap<String, Object> status = new HashMap<>();
 		if (info != null) {

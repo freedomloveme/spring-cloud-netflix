@@ -1,5 +1,5 @@
 /*
- * Copyright 2013-2019 the original author or authors.
+ * Copyright 2013-2022 the original author or authors.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,25 +17,32 @@
 package org.springframework.cloud.netflix.eureka;
 
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import com.netflix.appinfo.HealthCheckHandler;
 import com.netflix.appinfo.InstanceInfo;
+import com.netflix.appinfo.InstanceInfo.InstanceStatus;
 
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.InitializingBean;
-import org.springframework.boot.actuate.health.CompositeHealthIndicator;
-import org.springframework.boot.actuate.health.DefaultHealthIndicatorRegistry;
-import org.springframework.boot.actuate.health.HealthAggregator;
+import org.springframework.boot.actuate.health.CompositeHealthContributor;
+import org.springframework.boot.actuate.health.CompositeReactiveHealthContributor;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthContributor;
 import org.springframework.boot.actuate.health.HealthIndicator;
-import org.springframework.boot.actuate.health.HealthIndicatorRegistryFactory;
+import org.springframework.boot.actuate.health.NamedContributor;
+import org.springframework.boot.actuate.health.ReactiveHealthContributor;
+import org.springframework.boot.actuate.health.ReactiveHealthIndicator;
 import org.springframework.boot.actuate.health.Status;
-import org.springframework.cloud.client.discovery.health.DiscoveryCompositeHealthIndicator;
+import org.springframework.boot.actuate.health.StatusAggregator;
+import org.springframework.cloud.client.discovery.health.DiscoveryCompositeHealthContributor;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
+import org.springframework.context.Lifecycle;
+import org.springframework.core.Ordered;
 import org.springframework.util.Assert;
-
-import static com.netflix.appinfo.InstanceInfo.InstanceStatus;
 
 /**
  * A Eureka health checker, maps the application status into {@link InstanceStatus} that
@@ -43,84 +50,131 @@ import static com.netflix.appinfo.InstanceInfo.InstanceStatus;
  *
  * On each heartbeat Eureka performs the health check invoking registered
  * {@link HealthCheckHandler}. By default this implementation will perform aggregation of
- * all registered {@link HealthIndicator} through registered {@link HealthAggregator}.
+ * all registered {@link HealthIndicator} through registered {@link StatusAggregator}.
+ *
+ * A {@code null} status is returned when the application context is closed (or in the
+ * process of being closed). This prevents Eureka from updating the health status and only
+ * consider the status present in the current InstanceInfo.
  *
  * @author Jakub Narloch
+ * @author Spencer Gibb
+ * @author Nowrin Anwar Joyita
+ * @author Bertrand Renuart
+ * @author Olga Maciaszek-Sharma
  * @see HealthCheckHandler
- * @see HealthAggregator
+ * @see StatusAggregator
  */
 public class EurekaHealthCheckHandler
-		implements HealthCheckHandler, ApplicationContextAware, InitializingBean {
+		implements HealthCheckHandler, ApplicationContextAware, InitializingBean, Ordered, Lifecycle {
 
-	private static final Map<Status, InstanceInfo.InstanceStatus> STATUS_MAPPING = new HashMap<Status, InstanceInfo.InstanceStatus>() {
+	private static final Map<Status, InstanceInfo.InstanceStatus> STATUS_MAPPING = new HashMap<>() {
 		{
 			put(Status.UNKNOWN, InstanceStatus.UNKNOWN);
-			put(Status.OUT_OF_SERVICE, InstanceStatus.OUT_OF_SERVICE);
+			put(Status.OUT_OF_SERVICE, InstanceStatus.DOWN);
 			put(Status.DOWN, InstanceStatus.DOWN);
 			put(Status.UP, InstanceStatus.UP);
 		}
 	};
 
-	private CompositeHealthIndicator healthIndicator;
+	private final StatusAggregator statusAggregator;
 
 	private ApplicationContext applicationContext;
 
-	private HealthIndicatorRegistryFactory healthIndicatorRegistryFactory;
+	private final Map<String, HealthContributor> healthContributors = new HashMap<>();
 
-	private HealthAggregator healthAggregator;
+	/**
+	 * {@code true} until the context is stopped.
+	 */
+	private boolean running = true;
 
-	public EurekaHealthCheckHandler(HealthAggregator healthAggregator) {
-		Assert.notNull(healthAggregator, "HealthAggregator must not be null");
-		this.healthAggregator = healthAggregator;
-		this.healthIndicatorRegistryFactory = new HealthIndicatorRegistryFactory();
-		this.healthIndicator = new CompositeHealthIndicator(this.healthAggregator,
-				new DefaultHealthIndicatorRegistry());
+	private final Map<String, ReactiveHealthContributor> reactiveHealthContributors = new HashMap<>();
+
+	public EurekaHealthCheckHandler(StatusAggregator statusAggregator) {
+		this.statusAggregator = statusAggregator;
+		Assert.notNull(statusAggregator, "StatusAggregator must not be null");
+
 	}
 
 	@Override
-	public void setApplicationContext(ApplicationContext applicationContext)
-			throws BeansException {
+	public void setApplicationContext(ApplicationContext applicationContext) throws BeansException {
 		this.applicationContext = applicationContext;
 	}
 
 	@Override
-	public void afterPropertiesSet() throws Exception {
-		final Map<String, HealthIndicator> healthIndicators = applicationContext
-				.getBeansOfType(HealthIndicator.class);
-		Map<String, HealthIndicator> finalHealthIndicators = new HashMap<>();
+	public void afterPropertiesSet() {
+		populateHealthContributors(applicationContext.getBeansOfType(HealthContributor.class));
+		reactiveHealthContributors.putAll(applicationContext.getBeansOfType(ReactiveHealthContributor.class));
+	}
 
-		for (Map.Entry<String, HealthIndicator> entry : healthIndicators.entrySet()) {
-
+	void populateHealthContributors(Map<String, HealthContributor> healthContributors) {
+		for (Map.Entry<String, HealthContributor> entry : healthContributors.entrySet()) {
 			// ignore EurekaHealthIndicator and flatten the rest of the composite
 			// otherwise there is a never ending cycle of down. See gh-643
-			if (entry.getValue() instanceof DiscoveryCompositeHealthIndicator) {
-				DiscoveryCompositeHealthIndicator indicator = (DiscoveryCompositeHealthIndicator) entry
-						.getValue();
-				for (DiscoveryCompositeHealthIndicator.Holder holder : indicator
-						.getHealthIndicators()) {
-					if (!(holder.getDelegate() instanceof EurekaHealthIndicator)) {
-						finalHealthIndicators.put(holder.getDelegate().getName(), holder);
+			if (entry.getValue() instanceof DiscoveryCompositeHealthContributor indicator) {
+				indicator.getIndicators().forEach((name, discoveryHealthIndicator) -> {
+					if (!(discoveryHealthIndicator instanceof EurekaHealthIndicator)) {
+						this.healthContributors.put(name, (HealthIndicator) discoveryHealthIndicator::health);
 					}
-				}
-
+				});
 			}
 			else {
-				finalHealthIndicators.put(entry.getKey(), entry.getValue());
+				this.healthContributors.put(entry.getKey(), entry.getValue());
 			}
 		}
-		this.healthIndicator = new CompositeHealthIndicator(healthAggregator,
-				healthIndicatorRegistryFactory
-						.createHealthIndicatorRegistry(finalHealthIndicators));
 	}
 
 	@Override
 	public InstanceStatus getStatus(InstanceStatus instanceStatus) {
-		return getHealthStatus();
+		if (running) {
+			return getHealthStatus();
+		}
+		else {
+			// Return nothing if the context is not running, so the status held by the
+			// InstanceInfo remains unchanged.
+			// See gh-1571
+			return null;
+		}
 	}
 
 	protected InstanceStatus getHealthStatus() {
-		final Status status = getHealthIndicator().health().getStatus();
+		Status status = getStatus(statusAggregator);
 		return mapToInstanceStatus(status);
+	}
+
+	protected Status getStatus(StatusAggregator statusAggregator) {
+		Set<Status> statusSet = new HashSet<>();
+		for (HealthContributor contributor : healthContributors.values()) {
+			processContributor(statusSet, contributor);
+		}
+		for (ReactiveHealthContributor contributor : reactiveHealthContributors.values()) {
+			processContributor(statusSet, contributor);
+		}
+		return statusAggregator.getAggregateStatus(statusSet);
+	}
+
+	private void processContributor(Set<Status> statusSet, HealthContributor contributor) {
+		if (contributor instanceof CompositeHealthContributor) {
+			for (NamedContributor<HealthContributor> contrib : (CompositeHealthContributor) contributor) {
+				processContributor(statusSet, contrib.getContributor());
+			}
+		}
+		else if (contributor instanceof HealthIndicator) {
+			statusSet.add(((HealthIndicator) contributor).health().getStatus());
+		}
+	}
+
+	private void processContributor(Set<Status> statusSet, ReactiveHealthContributor contributor) {
+		if (contributor instanceof CompositeReactiveHealthContributor) {
+			for (NamedContributor<ReactiveHealthContributor> contrib : (CompositeReactiveHealthContributor) contributor) {
+				processContributor(statusSet, contrib.getContributor());
+			}
+		}
+		else if (contributor instanceof ReactiveHealthIndicator) {
+			Health health = ((ReactiveHealthIndicator) contributor).health().block();
+			if (health != null) {
+				statusSet.add(health.getStatus());
+			}
+		}
 	}
 
 	protected InstanceStatus mapToInstanceStatus(Status status) {
@@ -130,8 +184,29 @@ public class EurekaHealthCheckHandler
 		return STATUS_MAPPING.get(status);
 	}
 
-	protected CompositeHealthIndicator getHealthIndicator() {
-		return healthIndicator;
+	@Override
+	public int getOrder() {
+		// registered with a high order priority so the close() method is invoked early
+		// and *BEFORE* EurekaAutoServiceRegistration
+		// (must be in effect when the registration is closed and the eureka replication
+		// triggered -> health check handler is
+		// consulted at that moment)
+		return Ordered.HIGHEST_PRECEDENCE;
+	}
+
+	@Override
+	public void start() {
+		running = true;
+	}
+
+	@Override
+	public void stop() {
+		running = false;
+	}
+
+	@Override
+	public boolean isRunning() {
+		return true;
 	}
 
 }
